@@ -1,3 +1,5 @@
+mod io_bind;
+
 fn main() {
-    println!("Back!");
+    println!("{}", io_bind::test());
 }
