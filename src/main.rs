@@ -1,5 +1,5 @@
-mod io_bind;
+mod bind;
 
 fn main() {
-    println!("{}", io_bind::test());
+    println!("{:?}", bind::get_window_sz());
 }
