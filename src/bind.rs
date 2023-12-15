@@ -5,7 +5,7 @@ use thiserror::Error;
 
 
 mod c {
-    pub use libc::c_int;
+    use libc::c_int;
 
     extern "C" {
         pub fn cterm_get_sz(
@@ -69,11 +69,18 @@ extern "C" fn sigwinch_callback(_: i32) {
     let _ = SENDER.get().unwrap().send(());
 }
 
+/// The [Receiver] receives an empty tuple when a
+/// SIGWINCH signal is received by the program.
+/// 
+/// # Panics
+///
+/// Panics if it is run more than once, since the current implementation uses
+/// an OnceLock.
 #[doc(alias = "cterm_set_sigwinch_callback")]
 pub fn get_sigwinch_channel() -> Receiver<()> {
     let (s, r) = channel();
-    // TODO: no unwrap()
-    SENDER.set(s).unwrap();
+    
+    SENDER.set(s).expect("get_sigwinch_channel was run two times");
     
     let err = unsafe {c::cterm_set_sigwinch_callback(Some(sigwinch_callback))};
     if err != 0 {
