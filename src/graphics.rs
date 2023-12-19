@@ -4,111 +4,105 @@
 //! [^1]: <https://sw.kovidgoyal.net/kitty/graphics-protocol>
 
 use std::io::{self, Write};
+use std::collections::HashMap;
+use std::fmt;
 
 use thiserror::Error;
+use base64::write::EncoderWriter;
+use base64::engine::general_purpose;
 
 static IMAGE_CHUNK_SIZE: usize = 4096;
 
-/// Encodes kitty data into APC, correctly separating the payload into chunks.
-/// The user only needs to create it with [KittyImageWriter::new], setting all
-/// the key-value pairs you need and then use [write_all](Write::write_all) to
-/// write the payload into the specified writer.
-///
-/// # Notes
-/// - It uses [write_all](Write::write_all) on the inner writer.
-pub struct KittyImageWriter<'w, W: Write> {
-    w: &'w mut W,
-    fields: Vec<String>,
-    q: char,
-    /// True if it isn't the first chunk
-    linger: bool,
-}
-
-impl<'w, W: Write> Write for KittyImageWriter<'w, W> {
-    fn flush(&mut self) -> io::Result<()> {
-        self.w.flush()
-    }
-    
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self.linger {
-            false => {
-                if buf.len() < IMAGE_CHUNK_SIZE {
-                    write!(
-                        self.w, "\x1b_Gq={},{};",
-                        self.q, self.fields.join(","),
-                    )?;
-                    self.w.write_all(buf)?;
-                    write!(self.w, "\x1b\\")?;
-                    Ok(buf.len())
-                } else {
-                    self.linger = true;
-                    write!(
-                        self.w, "\x1b_Gq={},m=1,{};",
-                        self.q, self.fields.join(","),
-                    )?;
-                    self.w.write_all(&buf[0..IMAGE_CHUNK_SIZE])?;
-                    write!(self.w, "\x1b\\")?;
-                    Ok(IMAGE_CHUNK_SIZE)
-                }
-            }
-            true => {
-                let last = buf.len() < IMAGE_CHUNK_SIZE;
-
-                write!(
-                    self.w, "\x1b_Gq={},m={};",
-                    self.q, if last {'0'} else {'1'},
-                )?;
-                let r = if last {
-                    self.w.write_all(buf)?;
-                    Ok(buf.len())
-                } else {
-                    self.w.write_all(&buf[0..IMAGE_CHUNK_SIZE])?;
-                    Ok(IMAGE_CHUNK_SIZE)
-                };
-                write!(self.w, "\x1b\\")?;
-                r
-            }
-        }
-    }
-}
 
 #[derive(Debug, Error)]
-pub enum KittyImageWriteBuildError {
+pub enum KittyImageWriteError {
     #[error("There are no fields for KittyImageWrite::new")]
     /// The implementation can't handle not having any fields since this
     /// wouldn't even make sense
     NoFields,
 }
 
-impl<'w, W: Write> KittyImageWriter<'w, W> {
-    /// `w` is the place to write to, `fields` is a vector "key=value" strings
-    ///
-    /// # Caution
-    /// Input isn't sanitized
-    pub fn new(w: &'w mut W, mut fields: Vec<String>)
-    -> Result<Self, KittyImageWriteBuildError> {
-        let mut q = None;
-        fields.retain(
-            |x| if x.starts_with("q=") {
-                q = x.chars().nth(2);
-                println!("Q: {q:?}");
-                false
-            } else {
-                true
-            }
-        );
-        if fields.is_empty() {
-            return Err(KittyImageWriteBuildError::NoFields);
+#[derive(Debug, Clone, Copy)]
+pub enum KittyImageCmdValue {
+    C(char),
+    I(i32),
+    U(u32),
+}
+
+impl fmt::Display for KittyImageCmdValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KittyImageCmdValue::C(c) => write!(f, "{c}"),
+            KittyImageCmdValue::I(i) => write!(f, "{i}"),
+            KittyImageCmdValue::U(u) => write!(f, "{u}"),
         }
-        
-        Ok(Self {
-            w: w,
-            q: q.unwrap_or('0'),
-            fields: fields,
-            linger: false,
-        })
     }
 }
+
+/// Encodes kitty data into APC, correctly separating the payload into chunks.
+///
+/// # Caution
+/// 
+/// Input isn't sanitized
+// FIXME: poor (inexistent) error handling for IO errors
+pub fn kitty_image_write(
+    buf: &[u8], mut fields: HashMap<char, KittyImageCmdValue>,
+) -> Result<(), KittyImageWriteError> {
+    //      This may be removed
+    if fields.is_empty() {
+        return Err(KittyImageWriteError::NoFields);
+    }
+
+    let mut enc = EncoderWriter::new(Vec::new(), &general_purpose::STANDARD);
+    //      TODO: Error handling
+    //      Maybe use anyhow
+    enc.write_all(buf).unwrap();
+    let b = enc.finish().unwrap();
+    let mut buf = &b[..];
+
+    let mut out = io::stdout().lock();
+    
+    let q = fields.remove(&'q').unwrap_or(KittyImageCmdValue::U(0));
+    let mut fields_s = String::new();
+    for (k, v) in fields {
+        fields_s.push(',');
+        fields_s.push(k);
+        fields_s.push('=');
+        fields_s.push_str(&format!("{v}"));
+    }
+    let fields = fields_s;
+
+    //      TODO: test with buf.len() == IMAGE_CHUNK_SIZE and other stuff
+    //      tests can be done by reading the response packet from kitty
+
+    if buf.len() <= IMAGE_CHUNK_SIZE {
+        write!(out, "\x1b_Gq={q}{};", fields).unwrap();
+        out.write_all(&buf).unwrap();
+        write!(out, "\x1b\\").unwrap();
+    } else {
+        write!(out, "\x1b_Gq={q},m=1{};", fields).unwrap();
+        out.write_all(&buf[0..IMAGE_CHUNK_SIZE]).unwrap();
+        write!(out, "\x1b\\").unwrap();
+        buf = &buf[IMAGE_CHUNK_SIZE..];
+
+        while buf.len() > IMAGE_CHUNK_SIZE {
+            write!(out, "\x1b_Gq={q},m=1;").unwrap();
+            out.write_all(&buf[0..IMAGE_CHUNK_SIZE]).unwrap();
+            write!(out, "\x1b\\").unwrap();
+            buf = &buf[IMAGE_CHUNK_SIZE..];
+        }
+
+        write!(out, "\x1b_Gq={q},m=0;").unwrap();
+        out.write_all(&buf).unwrap();
+        write!(out, "\x1b\\").unwrap();
+    }
+
+    out.flush().unwrap();
+
+    Ok(())
+}
+
+
 
 
 
