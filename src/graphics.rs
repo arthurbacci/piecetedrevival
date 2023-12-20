@@ -5,9 +5,10 @@
 //!
 //! [^1]: <https://sw.kovidgoyal.net/kitty/graphics-protocol>
 
+use std::fmt;
 use std::io::{self, Write};
 use std::collections::HashMap;
-use std::fmt;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use thiserror::Error;
 use base64::write::EncoderWriter;
@@ -117,19 +118,62 @@ pub fn kitty_image_write(
 //          may be useful to try to send the image data again if this happens,
 //          but somehow avoid an infinite loop of sending-image, querying-image
 //          and not-finding-image
-/*
+//
+/// An image the terminal is holding, but not necessarily displaying. 
+#[derive(Debug)]
 pub struct KittyImage {
+    id: u32,
     placements: Vec<KittyImagePlacement>,
 }
-*/
 
-/*
-impl Drop for KittyImage {
-    fn drop(&mut self) {
-        //      TODO: Here I should tell kitty to delete the image from it
+#[derive(Debug)]
+pub struct KittyImagePlacement {
+
+}
+
+impl KittyImage {
+    //      For now, support for direct png data
+    pub fn new(img: Vec<u8>) -> Self {
+        //      TODO: error handling
+
+        //      I don't know much about how the Orderings work so i'm just
+        //          using the strongest one
+        static IDCOUNT: AtomicU32 = AtomicU32::new(10);
+        let id = IDCOUNT.load(Ordering::SeqCst);
+        IDCOUNT.fetch_add(1, Ordering::SeqCst);
+        println!("IMAGE ID: {id}");
+
+        kitty_image_write(
+            &img,
+            HashMap::from([
+                //      a=t is the default already
+                ('i', KittyImageCmdValue::U(id)),
+                ('f', KittyImageCmdValue::U(100)),
+            ]),
+        ).unwrap();
+
+        KittyImage {
+            id: id,
+            placements: Vec::new()
+        }
     }
 }
-*/
+
+
+impl Drop for KittyImage {
+    fn drop(&mut self) {
+        kitty_image_write(
+            &[],
+            HashMap::from([
+                ('a', KittyImageCmdValue::C('d')),
+                ('d', KittyImageCmdValue::C('I')),
+                ('i', KittyImageCmdValue::U(self.id)),
+            ]),
+        ).unwrap();
+        println!("GONE: {}", self.id);
+    }
+}
+
 
 
 
