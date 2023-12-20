@@ -1,5 +1,7 @@
-//! Implementation of kitty's graphics protocol as specificed at [^1]. There's
-//! no support for terminals that don't implement kitty's graphics protocol.
+//! Implementation of general functionality for terminal graphics, including
+//! kitty's graphics protocol as specificed at [^1]. It's not a major goal of
+//! this project to support terminals that don't implement the most common
+//! protocols, focusing mainly on kitty.
 //!
 //! [^1]: <https://sw.kovidgoyal.net/kitty/graphics-protocol>
 
@@ -15,13 +17,9 @@ static IMAGE_CHUNK_SIZE: usize = 4096;
 
 
 #[derive(Debug, Error)]
-pub enum KittyImageWriteError {
-    #[error("There are no fields for KittyImageWrite::new")]
-    /// The implementation can't handle not having any fields since this
-    /// wouldn't even make sense
-    NoFields,
-}
+pub enum KittyImageWriteError {}
 
+///
 #[derive(Debug, Clone, Copy)]
 pub enum KittyImageCmdValue {
     C(char),
@@ -41,17 +39,19 @@ impl fmt::Display for KittyImageCmdValue {
 
 /// Encodes kitty data into APC, correctly separating the payload into chunks.
 ///
-/// # Caution
-/// 
-/// Input isn't sanitized
-// FIXME: poor (inexistent) error handling for IO errors
+//      FIXME: poor (inexistent) error handling
+//      TODO: read stdin searching for kitty's response. This may require
+//          implementing some kind of async "messages" so that responses from
+//          the terminal are redirected correctly. `mpsc` may not be perfect
+//          for this since more than one threads would need to intercept the
+//          packages. `crossbeam_channel` would be good if it had a way to seek
+//          data before making it disappear from the channel. Another solution
+//          would be to have a mpsc for each kind of event (keyboard press,
+//          etc), this is most likely the best option since 
 pub fn kitty_image_write(
     buf: &[u8], mut fields: HashMap<char, KittyImageCmdValue>,
 ) -> Result<(), KittyImageWriteError> {
-    //      This may be removed
-    if fields.is_empty() {
-        return Err(KittyImageWriteError::NoFields);
-    }
+    //      TODO: Test with empty fields
 
     let mut enc = EncoderWriter::new(Vec::new(), &general_purpose::STANDARD);
     //      TODO: Error handling
@@ -101,6 +101,37 @@ pub fn kitty_image_write(
 
     Ok(())
 }
+
+
+//      TODO: Make if first try using a temporary file (using a library for it,
+//      since it probably has a better handling and may work on non-linux sys-
+//      tems) and sending the data if it fails. As described in https://
+//      sw.kovidgoyal.net/kitty/graphics-protocol/
+//      #querying-support-and-available-transmission-mediums
+//
+//      Notes
+//
+//      Delete an image with "a=d;d=I" and "i=id"
+//      Delete a placement with "a=d;d=i" and "i=id,d=pid"
+//      Kitty may delete older images if too much storage is used in total, it
+//          may be useful to try to send the image data again if this happens,
+//          but somehow avoid an infinite loop of sending-image, querying-image
+//          and not-finding-image
+/*
+pub struct KittyImage {
+    placements: Vec<KittyImagePlacement>,
+}
+*/
+
+/*
+impl Drop for KittyImage {
+    fn drop(&mut self) {
+        //      TODO: Here I should tell kitty to delete the image from it
+    }
+}
+*/
+
+
 
 
 
