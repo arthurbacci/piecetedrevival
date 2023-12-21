@@ -20,7 +20,6 @@ static IMAGE_CHUNK_SIZE: usize = 4096;
 #[derive(Debug, Error)]
 pub enum KittyImageWriteError {}
 
-///
 #[derive(Debug, Clone, Copy)]
 pub enum KittyImageCmdValue {
     C(char),
@@ -113,35 +112,40 @@ pub fn kitty_image_write(
 //      Notes
 //
 //      Delete an image with "a=d;d=I" and "i=id"
-//      Delete a placement with "a=d;d=i" and "i=id,d=pid"
+//      Delete a placement with "a=d;d=i" and "i=id,p=pid"
 //      Kitty may delete older images if too much storage is used in total, it
 //          may be useful to try to send the image data again if this happens,
 //          but somehow avoid an infinite loop of sending-image, querying-image
 //          and not-finding-image
 //
-/// An image the terminal is holding, but not necessarily displaying. 
+/// An image the terminal is holding, but not necessarily displaying. When
+/// dropped its deleted from the terminal.
 #[derive(Debug)]
 pub struct KittyImage {
     id: u32,
-    placements: Vec<KittyImagePlacement>,
+    pub placements: Vec<KittyImagePlacement>,
 }
 
+/// A placement where an image is currently being displayed, when dropped it
+/// disappears from the screen.
 #[derive(Debug)]
 pub struct KittyImagePlacement {
-
+    imgid: u32,
+    id: u32,
 }
+
 
 impl KittyImage {
     //      For now, support for direct png data
+    //      FIXME: no error handling at all
+    /// Creates a new image and uploads it to kitty.
     pub fn new(img: Vec<u8>) -> Self {
         //      TODO: error handling
-
         //      I don't know much about how the Orderings work so i'm just
         //          using the strongest one
-        static IDCOUNT: AtomicU32 = AtomicU32::new(10);
-        let id = IDCOUNT.load(Ordering::SeqCst);
-        IDCOUNT.fetch_add(1, Ordering::SeqCst);
-        println!("IMAGE ID: {id}");
+        static IMAGEIDCOUNT: AtomicU32 = AtomicU32::new(10);
+        let id = IMAGEIDCOUNT.load(Ordering::SeqCst);
+        IMAGEIDCOUNT.fetch_add(1, Ordering::SeqCst);
 
         kitty_image_write(
             &img,
@@ -157,6 +161,29 @@ impl KittyImage {
             placements: Vec::new()
         }
     }
+
+    /// Displays the image and keeps track of the placement, thats removed once
+    /// the image is dropped. A single image can have different placements at a
+    /// single time.
+    // TODO: add a way to delete placements without deleting the image
+    pub fn place(&mut self, mut fields: HashMap<char, KittyImageCmdValue>) {
+        static PLACEIDCOUNT: AtomicU32 = AtomicU32::new(10);
+        let id = PLACEIDCOUNT.load(Ordering::SeqCst);
+        PLACEIDCOUNT.fetch_add(1, Ordering::SeqCst);
+    
+
+        fields.insert('a', KittyImageCmdValue::C('p'));
+        fields.insert('i', KittyImageCmdValue::U(self.id));
+        fields.insert('p', KittyImageCmdValue::U(id));
+        
+        kitty_image_write(&[], fields).unwrap();
+
+        let placement = KittyImagePlacement {
+            imgid: self.id,
+            id: id,
+        };
+        self.placements.push(placement);
+    }
 }
 
 
@@ -170,7 +197,20 @@ impl Drop for KittyImage {
                 ('i', KittyImageCmdValue::U(self.id)),
             ]),
         ).unwrap();
-        println!("GONE: {}", self.id);
+    }
+}
+
+impl Drop for KittyImagePlacement {
+    fn drop(&mut self) {
+        kitty_image_write(
+            &[],
+            HashMap::from([
+                ('a', KittyImageCmdValue::C('d')),
+                ('d', KittyImageCmdValue::C('i')),
+                ('i', KittyImageCmdValue::U(self.imgid)),
+                ('p', KittyImageCmdValue::U(self.id)),
+            ]),
+        ).unwrap();
     }
 }
 
