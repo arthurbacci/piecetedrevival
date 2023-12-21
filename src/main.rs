@@ -11,33 +11,35 @@ fn main() {
     println!("{:?}", bind::get_window_sz());
 
 
-    let mut img = Vec::new();
-    let mut f = File::open("data/logo.png").unwrap();
-    f.read_to_end(&mut img).unwrap();
-    drop(f);
+    let mut logo = Vec::new();
+    File::open("data/logo.png").unwrap().read_to_end(&mut logo).unwrap();
 
-    let mut img = KittyImage::new(img);
+    let logo = KittyImage::new(logo, HashMap::from([
+        ('f', KittyImageCmdValue::U(100)),
+    ]));
+
 
     let mut c = Vec::new();
-    let mut f = File::open("data/c.png").unwrap();
-    f.read_to_end(&mut c).unwrap();
-    drop(f);
+    File::open("data/c.png").unwrap().read_to_end(&mut c).unwrap();
 
-    let mut c = KittyImage::new(c);
+    let c = KittyImage::new(c, HashMap::from([
+        ('f', KittyImageCmdValue::U(100)),
+    ]));
 
-    c.place(HashMap::from([
+    let c1 = c.place(HashMap::from([
         ('y', KittyImageCmdValue::U(413)),
         ('c', KittyImageCmdValue::U(32)),
         ('r', KittyImageCmdValue::U(16)),
         ('z', KittyImageCmdValue::I(-2)),
+        ('C', KittyImageCmdValue::U(1)),
     ]));
 
-    img.place(HashMap::from([
+    let l1 = logo.place(HashMap::from([
         ('c', KittyImageCmdValue::U(16)),
         ('r', KittyImageCmdValue::U(8)),
     ]));
 
-    img.place(HashMap::from([
+    let l2 = logo.place(HashMap::from([
         ('c', KittyImageCmdValue::U(16)),
         ('r', KittyImageCmdValue::U(8)),
     ]));
@@ -45,4 +47,8 @@ fn main() {
 
 
     while let Err(TryRecvError::Empty) = rx.try_recv() {}
+
+    drop(c1);
+    drop(l1);
+    drop(l2);
 }

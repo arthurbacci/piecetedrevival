@@ -123,23 +123,23 @@ pub fn kitty_image_write(
 #[derive(Debug)]
 pub struct KittyImage {
     id: u32,
-    pub placements: Vec<KittyImagePlacement>,
 }
 
 /// A placement where an image is currently being displayed, when dropped it
 /// disappears from the screen.
 #[derive(Debug)]
-pub struct KittyImagePlacement {
-    imgid: u32,
+pub struct KittyImagePlacement<'a> {
+    img: &'a KittyImage,
     id: u32,
 }
 
 
 impl KittyImage {
-    //      For now, support for direct png data
-    //      FIXME: no error handling at all
     /// Creates a new image and uploads it to kitty.
-    pub fn new(img: Vec<u8>) -> Self {
+    pub fn new(
+        img: Vec<u8>,
+        mut fields: HashMap<char, KittyImageCmdValue>,
+    ) -> Self {
         //      TODO: error handling
         //      I don't know much about how the Orderings work so i'm just
         //          using the strongest one
@@ -147,42 +147,34 @@ impl KittyImage {
         let id = IMAGEIDCOUNT.load(Ordering::SeqCst);
         IMAGEIDCOUNT.fetch_add(1, Ordering::SeqCst);
 
-        kitty_image_write(
-            &img,
-            HashMap::from([
-                //      a=t is the default already
-                ('i', KittyImageCmdValue::U(id)),
-                ('f', KittyImageCmdValue::U(100)),
-            ]),
-        ).unwrap();
+        fields.insert('i', KittyImageCmdValue::U(id));
+        kitty_image_write(&img, fields).unwrap();
 
         KittyImage {
-            id: id,
-            placements: Vec::new()
+            id,
         }
     }
 
-    /// Displays the image and keeps track of the placement, thats removed once
-    /// the image is dropped. A single image can have different placements at a
-    /// single time.
-    // TODO: add a way to delete placements without deleting the image
-    pub fn place(&mut self, mut fields: HashMap<char, KittyImageCmdValue>) {
+    /// Displays the image as a placement, that is removed once when it is
+    /// dropped. A single image can have different placements at a single time.
+    pub fn place<'a>(
+        &'a self,
+        mut fields: HashMap<char, KittyImageCmdValue>,
+    ) -> KittyImagePlacement<'a> {
         static PLACEIDCOUNT: AtomicU32 = AtomicU32::new(10);
         let id = PLACEIDCOUNT.load(Ordering::SeqCst);
         PLACEIDCOUNT.fetch_add(1, Ordering::SeqCst);
     
-
         fields.insert('a', KittyImageCmdValue::C('p'));
         fields.insert('i', KittyImageCmdValue::U(self.id));
         fields.insert('p', KittyImageCmdValue::U(id));
         
         kitty_image_write(&[], fields).unwrap();
 
-        let placement = KittyImagePlacement {
-            imgid: self.id,
+        KittyImagePlacement {
+            img: &self,
             id: id,
-        };
-        self.placements.push(placement);
+        }
     }
 }
 
@@ -200,14 +192,14 @@ impl Drop for KittyImage {
     }
 }
 
-impl Drop for KittyImagePlacement {
+impl<'a> Drop for KittyImagePlacement<'a> {
     fn drop(&mut self) {
         kitty_image_write(
             &[],
             HashMap::from([
                 ('a', KittyImageCmdValue::C('d')),
                 ('d', KittyImageCmdValue::C('i')),
-                ('i', KittyImageCmdValue::U(self.imgid)),
+                ('i', KittyImageCmdValue::U(self.img.id)),
                 ('p', KittyImageCmdValue::U(self.id)),
             ]),
         ).unwrap();
